@@ -109,8 +109,8 @@ def check_anomaly_confidence(data, metric, n_conf=6):
 
 
 def run_alerts(chat=None):
-    chat_id = chat or -1001706798154
-    bot = telegram.Bot(token='5139371802:AAGbDmlhIRyyI7ZufYu2NUJuKjOV0SYzyvU')
+    chat_id = chat or -xxxxxxxxxxxxxxxxx
+    bot = telegram.Bot(token='xxxxxxxxxxxxxxxxxxxxxxxxxx')
 
     data = Getch(''' SELECT
                           toStartOfFifteenMinutes(time) as ts
