@@ -1,0 +1,192 @@
+import pandahouse
+from read_db.CH import Getch
+import pandas as pd
+import numpy as np
+import matplotlib as mpl
+import telegram
+import io
+from matplotlib import pyplot as plt
+import seaborn as sns
+from datetime import datetime, timedelta
+from pip._internal import main as pipmain
+
+pipmain(['install', 'jinja2'])
+
+def test_report(chat=None):
+    chat_id = chat or -xxxxxxxxxxxxxx
+    bot=telegram.Bot(token='xxxxxxxxxxxxxxxxxxxx')
+    def style_negative(v, props=''):
+        return props if v < 0 else None
+    
+    def make_pretty(styler):
+        styler.set_caption("Karpov Courses")\
+        .set_table_styles([{
+         'selector': 'caption',
+         'props': 'caption-side: bottom; font-size:1.25em;'
+         }], overwrite=False)
+        styler.format(precision=2, thousands=" ",
+                    formatter={('Day'): "{:,.0f}",
+                               ('Difference'): "{:,.2f} %"
+                              })
+        styler.applymap(style_negative, props='color:red;'
+                       )
+        styler.bar(subset=['Difference'],
+          align='mid',
+          color=['coral', 'LightGreen'],
+          vmin=-100,
+          vmax=100
+         )
+        styler.set_properties(**{'font-size': '12pt'}, **{'background-color': 'AntiqueWhite'})
+        styler.set_properties(**{'text-align': 'center'}, subset='Difference')
+        styler.set_table_styles([{
+        'selector': 'th',
+        'props': 'background-color: Coral; color: black; font-size: 12pt; text-align: center;'
+        }], overwrite=False)
+
+        return styler
+    
+    data = Getch('''
+    SELECT toStartOfDay(toDateTime(time)) "Дата",
+    count(DISTINCT user_id) DAO,
+    (countIf(user_id, action='like')/countIf(user_id, action='view'))*100 CTR,
+    countIf(user_id, action='view') "Просмотры",
+    countIf(user_id, action='like') "Лайки"
+    FROM simulator_20220320.feed_actions
+    WHERE toStartOfDay(toDateTime(time)) > today() - 9 and toStartOfDay(toDateTime(time)) < today()
+    GROUP BY toStartOfDay(toDateTime(time))
+    order by toStartOfDay(toDateTime(time)) desc
+    ''').df
+    
+    data_st = Getch('''
+    SELECT toStartOfDay(toDateTime(time)) AS time,
+           AVG("DAU_MAU") AS Stickiness
+    FROM
+      (SELECT time,
+              DAU_MAU
+       FROM
+         (select __timestamp as time,
+                 round((distinct_users_d / distinct_users_m), 2) DAU_MAU
+          from
+            (SELECT toStartOfDay(toDateTime(time)) AS __timestamp,
+                    count(DISTINCT user_id) AS distinct_users_d
+             FROM simulator_20220320.feed_actions
+             GROUP BY __timestamp) t1
+          JOIN
+            (SELECT toStartOfMonth(toDateTime(time)) AS __timestamp,
+                    count(DISTINCT user_id) AS distinct_users_m
+             FROM simulator_20220320.feed_actions
+             GROUP BY __timestamp) t2 on month(t1.__timestamp) = month(t2.__timestamp)
+          order by time) AS virtual_table) AS virtual_table
+    WHERE toStartOfDay(toDateTime(time)) > today() - 9 and toStartOfDay(toDateTime(time)) < today()
+    GROUP BY time
+    ORDER BY time DESC;
+    ''').df
+    
+    dataDiff = Getch('''
+    SELECT toStartOfDay(toDateTime(time)) AS time,
+           count(DISTINCT user_id) AS "Пользователи"
+    FROM simulator_20220320.feed_actions
+    WHERE time >= toDateTime('2022-02-17 00:00:00')
+      AND time < today()
+    GROUP BY time
+    ORDER BY time DESC
+    ''').df
+    
+    data_mess = Getch('''
+    SELECT toStartOfDay(toDateTime(time)) "Дата",
+            count(DISTINCT user_id) DAO_messages
+    FROM simulator_20220320.message_actions
+    WHERE toStartOfDay(toDateTime(time)) > today() - 9 and toStartOfDay(toDateTime(time)) < today()
+    GROUP BY toStartOfDay(toDateTime(time))
+    order by toStartOfDay(toDateTime(time)) desc
+    ''').df
+    
+    dataDiff['Прирост аудитории'] = dataDiff['Пользователи']-dataDiff['Пользователи'].shift(-1)
+    dataDiff['Percentage'] = ((dataDiff['Пользователи']-dataDiff['Пользователи'].shift(-1))/dataDiff['Пользователи'].shift(-1))*100
+    dataDiff = dataDiff[:-1]
+    dDiff = dataDiff['Прирост аудитории'].values[0]
+    dDiff_perc = round(dataDiff['Percentage'].values[0], 2)
+    
+    dStickiness = data_st['Stickiness'].values[0]
+
+    dDAO = data['DAO'].values[0]
+    dCTR = round(data['CTR'].values[0], 2)
+    dViews = data['Просмотры'].values[0]
+    dLikes = data['Лайки'].values[0]
+    dDAO_mess = data_mess['DAO_messages'].values[0]
+    
+    
+    message = (f"Данные за последний день ({(datetime.now() - timedelta(days=1)).strftime('%d.%m.%Y')}):") + "\n"\
+    + (f"DAO(feed) {dDAO}") + "\n" + (f"CTR {dCTR}%") + "\n" + (f"Views {dViews}") + "\n" + (f"Likes {dLikes}") + "\n" + (f"Stickiness {dStickiness}%") + "\n"\
+    + (f"Прирост аудитории за день {dDiff} ({dDiff_perc}%)") + "\n" + (f"DAO(messages) {dDAO_mess}")
+    
+    bot.sendMessage(chat_id=chat_id, text=message)
+
+    wData = data.drop(index=[0])
+    wData_mess = data_mess.drop(index=[0])
+    
+    wDAO = round(wData['DAO'].mean(), 2)
+    wCTR = round(wData['CTR'].mean(), 2)
+    wViews = round(wData['Просмотры'].mean(), 2)
+    wLikes = round(wData['Лайки'].mean(), 2)
+    wDAO_mess = round(wData_mess['DAO_messages'].mean(), 2)
+
+
+    diffDAO = round(((dDAO - wDAO)/wDAO)*100, 2)
+    diffCTR = round(((dCTR - wCTR)/wCTR)*100, 2)
+    diffViews = round(((dViews - wViews)/wViews)*100, 2)
+    diffLikes = round(((dLikes - wLikes)/wLikes)*100, 2)
+    diffDAO_mess = round(((dDAO_mess - wDAO_mess)/wDAO_mess)*100, 2)
+
+    df = pd.DataFrame([[dDAO, wDAO, diffDAO],[dCTR, wCTR, diffCTR], [dViews, wViews, diffViews], [dLikes, wLikes, diffLikes], [dDAO_mess, wDAO_mess, diffDAO_mess]],
+                  index=pd.Index(['DAO_feed', 'CTR', 'Views', 'Likes', 'DAO_mess'], name='Metrics:'),
+                  columns=['Day', 'Week', 'Difference'])
+    
+    df_styled = df.style.pipe(make_pretty)
+    
+    
+    file_object = io.BytesIO()
+    df_styled.to_excel(file_object, engine='openpyxl')
+    file_object.seek(0)
+    file_object.name = 'report.xlsx'
+
+    bot.sendDocument(chat_id=chat_id, document=file_object)
+    
+    data_mess.plot(x="Дата", figsize=(12, 8))
+
+    plot_object = io.BytesIO()
+    plt.savefig(plot_object)
+    plot_object.name = 'messages.png'
+    plot_object.seek(0)
+
+    plt.close()
+
+    bot.sendPhoto(chat_id=chat_id, photo = plot_object)
+    
+    dataDiff.plot(x="time", y="Прирост аудитории", figsize=(12,8))
+    
+    plot_object = io.BytesIO()
+    plt.savefig(plot_object)
+    plot_object.name = 'difference.png'
+    plot_object.seek(0)
+
+    plt.close()
+
+    bot.sendPhoto(chat_id=chat_id, photo = plot_object)
+    
+        
+    data_st.plot(x="time", y="Stickiness", figsize=(12,8))
+    
+    plot_object = io.BytesIO()
+    plt.savefig(plot_object)
+    plot_object.name = 'stickiness.png'
+    plot_object.seek(0)
+
+    plt.close()
+
+    bot.sendPhoto(chat_id=chat_id, photo = plot_object)
+    
+try:
+    test_report()
+except Exception as e:
+    print(e)
